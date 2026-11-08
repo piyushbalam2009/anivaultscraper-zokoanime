@@ -1826,29 +1826,31 @@ function renderQualityBar(data, video, hls, masterUrl) {
   const loadQualitySource = (url) => {
     const resumeTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     const wasPaused = video.paused;
+    let manifestReady = !hls;
+    let mediaReady = false;
     let restored = false;
     const restorePlayback = () => {
-      if (restored) return;
+      if (restored || !manifestReady || !mediaReady) return;
       restored = true;
-      const restore = () => {
-        if (resumeTime > 0 && Number.isFinite(resumeTime)) {
-          try { video.currentTime = resumeTime; } catch (e) {}
-        }
-        if (!wasPaused) video.play().catch(() => {});
-      };
-      if (video.readyState >= 1) restore();
-      else video.addEventListener('loadedmetadata', restore, { once: true });
+      if (resumeTime > 0 && Number.isFinite(resumeTime)) {
+        try { video.currentTime = resumeTime; } catch (e) {}
+      }
+      if (!wasPaused) video.play().catch(() => {});
     };
+    video.addEventListener('loadedmetadata', () => {
+      mediaReady = true;
+      restorePlayback();
+    }, { once: true });
 
     if (hls) {
       const onManifestParsed = () => {
         hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed);
+        manifestReady = true;
         restorePlayback();
       };
       hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed);
       hls.loadSource(url);
     } else {
-      video.addEventListener('loadedmetadata', restorePlayback, { once: true });
       video.src = url;
       video.load();
     }
