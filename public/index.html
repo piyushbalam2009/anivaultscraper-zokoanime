@@ -196,6 +196,12 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 .embed-sub-bar { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 .embed-sub-btn { font-family:var(--mono); font-size:11px; padding:6px 12px; border-radius:6px; border:1px solid var(--border); background:none; color:var(--muted); cursor:pointer; transition:all 0.15s; }
 .embed-sub-btn.active { background:rgba(167,139,250,0.15); border-color:var(--accent3); color:var(--accent3); }
+.embed-quality-bar { display:none; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+.embed-quality-bar.visible { display:flex; }
+.embed-quality-label { font-family:var(--mono); font-size:10px; letter-spacing:1px; color:var(--muted); margin-right:4px; }
+.embed-quality-btn { font-family:var(--mono); font-size:11px; padding:6px 12px; border-radius:6px; border:1px solid var(--border); background:none; color:var(--muted); cursor:pointer; transition:all 0.15s; }
+.embed-quality-btn:hover { border-color:var(--accent2); color:var(--accent2); }
+.embed-quality-btn.active { background:rgba(6,182,212,0.12); border-color:var(--accent2); color:var(--accent2); }
 
 .status-bar { display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--bg); border:1px solid var(--border); border-radius:8px; margin-bottom:12px; font-family:var(--mono); font-size:12px; }
 .status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
@@ -570,6 +576,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
                 <span>Embed preview will appear here after fetch</span>
               </div>
             </div>
+            <div class="embed-quality-bar" id="embedQualityBar" aria-label="Video quality"></div>
             <div class="embed-sub-bar" id="embedSubBar"></div>
           </div>
         </div>
@@ -1796,10 +1803,93 @@ function renderSubtitleBar(video, subtitles) {
   if (!hasDefault) setActive(offBtn);
 }
 
+function renderQualityBar(data, video, hls, masterUrl) {
+  const bar = document.getElementById('embedQualityBar');
+  bar.innerHTML = '';
+  bar.classList.remove('visible');
+
+  const qualities = Array.isArray(data.qualities)
+    ? data.qualities.filter(q => q && typeof q.hlsProxyUrl === 'string' && q.hlsProxyUrl)
+    : [];
+  if (!qualities.length) return;
+
+  bar.classList.add('visible');
+  const setActive = (activeBtn) => {
+    bar.querySelectorAll('.embed-quality-btn').forEach(btn => {
+      btn.classList.toggle('active', btn === activeBtn);
+      btn.setAttribute('aria-pressed', btn === activeBtn ? 'true' : 'false');
+    });
+  };
+
+  // Reload only the selected HLS playlist and restore the playback position.
+  // Auto uses the master playlist; each manual option uses its own proxied variant.
+  const loadQualitySource = (url) => {
+    const resumeTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    const wasPaused = video.paused;
+    let restored = false;
+    const restorePlayback = () => {
+      if (restored) return;
+      restored = true;
+      const restore = () => {
+        if (resumeTime > 0 && Number.isFinite(resumeTime)) {
+          try { video.currentTime = resumeTime; } catch (e) {}
+        }
+        if (!wasPaused) video.play().catch(() => {});
+      };
+      if (video.readyState >= 1) restore();
+      else video.addEventListener('loadedmetadata', restore, { once: true });
+    };
+
+    if (hls) {
+      const onManifestParsed = () => {
+        hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed);
+        restorePlayback();
+      };
+      hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed);
+      hls.loadSource(url);
+    } else {
+      video.addEventListener('loadedmetadata', restorePlayback, { once: true });
+      video.src = url;
+      video.load();
+    }
+  };
+
+  const autoBtn = document.createElement('button');
+  autoBtn.type = 'button';
+  autoBtn.className = 'embed-quality-btn active';
+  autoBtn.textContent = 'Auto';
+  autoBtn.setAttribute('aria-pressed', 'true');
+  autoBtn.onclick = () => {
+    setActive(autoBtn);
+    loadQualitySource(masterUrl);
+  };
+  bar.appendChild(document.createElement('span')).className = 'embed-quality-label';
+  bar.querySelector('.embed-quality-label').textContent = 'QUALITY';
+  bar.appendChild(autoBtn);
+
+  qualities.forEach((quality) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'embed-quality-btn';
+    btn.textContent = quality.quality || (quality.height ? String(quality.height) + 'p' : 'Quality');
+    btn.title = quality.resolution || btn.textContent;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.onclick = () => {
+      setActive(btn);
+      loadQualitySource(quality.hlsProxyUrl);
+    };
+    bar.appendChild(btn);
+  });
+}
+
 function renderEmbedPreview(data) {
   const ep = document.getElementById('embedPreview');
   const subBar = document.getElementById('embedSubBar');
+  const qualityBar = document.getElementById('embedQualityBar');
   subBar.innerHTML = '';
+  qualityBar.innerHTML = '';
+  qualityBar.classList.remove('visible');
+
   const embedUrl = primaryEmbedUrl(data);
   const hlsUrl = data.hlsProxyUrl || data.m3u8 || (embedUrl && embedUrl.includes('.m3u8') ? embedUrl : '');
 
@@ -1808,7 +1898,7 @@ function renderEmbedPreview(data) {
       try { window._currentHls.destroy(); } catch(e) {}
       window._currentHls = null;
     }
-    ep.innerHTML = `<video id="hlsPreview" controls playsinline crossorigin="anonymous"></video>`;
+    ep.innerHTML = '<video id="hlsPreview" controls playsinline crossorigin="anonymous"></video>';
     const video = document.getElementById('hlsPreview');
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({
@@ -1817,10 +1907,14 @@ function renderEmbedPreview(data) {
         backBufferLength: 90,
       });
       window._currentHls = hls;
+      let initialManifestParsed = false;
       hls.loadSource(hlsUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
+        if (!initialManifestParsed) {
+          initialManifestParsed = true;
+          video.play().catch(() => {});
+        }
       });
       hls.on(Hls.Events.ERROR, (event, errData) => {
         if (errData && errData.fatal) {
@@ -1837,8 +1931,10 @@ function renderEmbedPreview(data) {
           }
         }
       });
+      renderQualityBar(data, video, hls, hlsUrl);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = hlsUrl;
+      renderQualityBar(data, video, null, hlsUrl);
     } else {
       ep.innerHTML = '<div class="embed-placeholder"><div class="embed-placeholder-icon">!</div><span>HLS playback is not supported in this browser</span></div>';
       return;
@@ -1854,18 +1950,17 @@ function renderEmbedPreview(data) {
 
   if (data.mp4 || data.playbackMode === 'mp4') {
     const videoSrc = data.mp4ProxyUrl || data.mp4 || embedUrl;
-    ep.innerHTML = `<video controls playsinline crossorigin="anonymous" src="${escapeAttr(videoSrc)}"></video>`;
+    ep.innerHTML = '<video controls playsinline crossorigin="anonymous" src="' + escapeAttr(videoSrc) + '"></video>';
     renderSubtitleBar(document.querySelector('#embedPreview video'), data.subtitles);
     return;
   }
 
   if (embedUrl) {
-    ep.innerHTML = `<iframe src="${escapeAttr(embedUrl)}" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>`;
+    ep.innerHTML = '<iframe src="' + escapeAttr(embedUrl) + '" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>';
   } else {
     ep.innerHTML = '<div class="embed-placeholder"><div class="embed-placeholder-icon">!</div><span>No embed URL returned</span></div>';
   }
 }
-
 async function doFetch() {
   const url = buildUrl();
   if (!url) {
