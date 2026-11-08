@@ -506,7 +506,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
         </div>
 
         <!-- SERVER SELECTION -->
-        <div style="margin-bottom:20px">
+        <div id="serverSelectionWrap" style="margin-bottom:20px">
           <label class="field-label">Server
             <span id="serverLoadingLabel" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;margin-left:8px;display:none">
               <span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>
@@ -515,7 +515,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
           <div class="server-chips" id="serverChips">
             <div class="server-chip auto active" data-server="" onclick="selectServer(this)">⚡ Auto</div>
           </div>
-          <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Select an anime + episode first to load available servers</div>
+          <div id="serverHelpText" style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Select an anime + episode first to load available servers</div>
         </div>
 
         <!-- BASE URL -->
@@ -803,6 +803,12 @@ GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class=
         <span class="ep-chevron">▼</span>
       </div>
       <div class="endpoint-body">
+        <div style="margin:0 0 18px;padding:14px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+          <div style="font-weight:700;margin-bottom:8px;color:var(--text)">ZokoAnime AniList-first Watch route (recommended)</div>
+          <div style="font-family:var(--mono);font-size:12px;word-break:break-all;color:var(--accent2)">GET /api/watch/zokoanime/{anilist_id}/{episode}/{type}</div>
+          <p style="margin:8px 0;color:var(--muted);font-size:12px">Pass an AniList ID, episode number, and <code>sub</code> or <code>dub</code>. The API resolves the AniList-to-MAL mapping and selects the ZokoAnime stream automatically; no <code>serverId</code> query parameter is required.</p>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text)">GET /api/watch/zokoanime/21/1/sub</div>
+        </div>
         <table class="params-table">
           <thead><tr><th>Param</th><th>Type</th><th>Where</th><th>Description</th></tr></thead>
           <tbody>
@@ -1475,6 +1481,7 @@ function setSource(s, card) {
   document.getElementById('heavenIdWrap').style.display = s === 'animeheaven' ? 'block' : 'none';
   document.getElementById('animeHeavenVercelNotice').style.display = s === 'animeheaven' ? 'block' : 'none';
   resetServers();
+  updateServerSelectionVisibility();
   updateUrlPreview();
   if (selAnime && document.getElementById('epInput').value) loadServers();
 }
@@ -1486,7 +1493,12 @@ function setEndpoint(e, btn) {
   selEndpoint = e;
   btn.closest('.seg-control').querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateServerSelectionVisibility();
   updateUrlPreview();
+  if (selSource === 'zokoanime') {
+    if (e === 'servers' && selAnime) loadServers();
+    else resetServers();
+  }
 }
 function setTab(tab, btn) {
   document.querySelectorAll('.result-tab').forEach(t => t.classList.remove('active'));
@@ -1496,6 +1508,22 @@ function setTab(tab, btn) {
 }
 
 // ── SERVER CHIPS
+function updateServerSelectionVisibility() {
+  const wrap = document.getElementById('serverSelectionWrap');
+  if (!wrap) return;
+
+  // The AniList-based ZokoAnime Watch route resolves its stream automatically.
+  const directZokoWatch = selSource === 'zokoanime' && selEndpoint === 'watch';
+  wrap.style.display = directZokoWatch ? 'none' : 'block';
+
+  const help = document.getElementById('serverHelpText');
+  if (help) {
+    help.textContent = selSource === 'zokoanime'
+      ? 'Legacy server listing. The AniList-based Watch endpoint resolves the stream automatically.'
+      : 'Select an anime + episode first to load available servers';
+  }
+}
+
 function selectServer(chip) {
   document.querySelectorAll('.server-chip').forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
@@ -1515,6 +1543,14 @@ function getHeavenId() {
 async function loadServers() {
   const ep = document.getElementById('epInput').value;
   const heavenId = getHeavenId();
+
+  // The new ZokoAnime Watch route does not need a serverId or a server lookup.
+  if (selSource === 'zokoanime' && selEndpoint === 'watch') {
+    resetServers();
+    updateServerSelectionVisibility();
+    return;
+  }
+
   if (!ep) return;
   if (selSource !== 'animeheaven' && !selAnime) return;
   if (selSource === 'animeheaven' && !selAnime && !heavenId) return;
@@ -1655,14 +1691,21 @@ function buildUrl() {
   if (selSource === 'zokoanime') {
     if (!selAnime) return null;
     if (selEndpoint === 'episodes') return null;
+
+    if (selEndpoint === 'watch') {
+      // This route requires the AniList ID; it resolves the MAL mapping server-side.
+      if (!selAnime.id) return null;
+      return `${base}/api/watch/zokoanime/${encodeURIComponent(selAnime.id)}/${encodeURIComponent(ep)}/${selType}`;
+    }
+
+    // Keep the legacy server-list endpoint available when the user explicitly selects Servers.
     const idParam = selAnime.id
       ? `anilistId=${encodeURIComponent(selAnime.id)}`
       : `malId=${encodeURIComponent(selAnime.malId)}`;
     if (selEndpoint === 'servers') {
       return `${base}/api/providers/zokoanime/servers?${idParam}&ep=${encodeURIComponent(ep)}`;
     }
-    const serverId = selServer || `${selAnime.malId || ''}::${ep}::${selType}`;
-    return `${base}/api/providers/zokoanime/watch?serverId=${encodeURIComponent(serverId)}`;
+    return null;
   }
 
   if (selSource === 'animeheaven' && heavenId) {
@@ -1689,9 +1732,12 @@ function buildUrl() {
 function updateUrlPreview() {
   const url = buildUrl();
   const el = document.getElementById('urlPreview');
+  const emptyMessage = selSource === 'zokoanime' && selEndpoint === 'watch' && selAnime && !selAnime.id
+    ? 'ZokoAnime Watch requires an AniList ID. Select an anime with an AniList mapping.'
+    : 'Select an anime, or paste an AnimeHeaven id';
   el.innerHTML = url
     ? `<span style="color:var(--accent2)">GET</span> <span style="color:var(--text)">${url}</span>`
-    : '<span style="color:var(--muted)">Select an anime, or paste an AnimeHeaven id</span>';
+    : `<span style="color:var(--muted)">${escapeAttr(emptyMessage)}</span>`;
 }
 
 // ── FETCH
@@ -1822,7 +1868,13 @@ function renderEmbedPreview(data) {
 
 async function doFetch() {
   const url = buildUrl();
-  if (!url) { alert('Search and select an anime first, or paste an AnimeHeaven id.'); return; }
+  if (!url) {
+    const message = selSource === 'zokoanime' && selEndpoint === 'watch' && selAnime && !selAnime.id
+      ? 'ZokoAnime Watch requires an AniList ID. Select an anime with an AniList mapping.'
+      : 'Search and select an anime first, or paste an AnimeHeaven id.';
+    alert(message);
+    return;
+  }
 
   const btn = document.getElementById('fetchBtn');
   btn.disabled = true; btn.textContent = '⏳ Fetching...';
