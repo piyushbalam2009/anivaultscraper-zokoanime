@@ -238,9 +238,26 @@ covers anime/character details, episodes, pictures, theme songs, trailers,
 and recommendations, backed by TMDB/Kitsu/AniList for art and thumbnails.
 
 
+### ZokoAnime AniList-first Watch endpoint
+
+Use this route from clients that already have an AniList ID. The API resolves the corresponding MAL ID internally, then requests the selected episode from ZokoAnime. The client does not need to build a provider-specific `serverId`.
+
+```http
+GET /api/watch/zokoanime/{anilist_id}/{episode}/{sub|dub}
+```
+
+Example:
+
+```http
+GET /api/watch/zokoanime/21/1/sub
+GET /api/watch/zokoanime/21/1/dub
+```
+
+The response includes the AniList ID, resolved MAL ID, episode and audio type, a top-level adaptive `hlsProxyUrl`, proxied subtitle URLs, and a `qualities` array discovered from the upstream HLS master playlist. Each quality entry includes the advertised resolution, dimensions, bandwidth, and its own `hlsProxyUrl`. Only variants listed by the upstream playlist are returned; if variant inspection fails, the adaptive master URL remains available and `qualities` is empty. Only `sub` and `dub` are accepted.
+
 ### ZokoAnime direct-ID provider
 
-ZokoAnime is available as a direct MAL-ID/episode resolver. It does not currently expose a verified search or episode-catalogue adapter here; obtain the MAL ID and episode number from your metadata/episode source first.
+The legacy provider endpoints remain available for clients that explicitly want to inspect the provider's server choices. For normal AniList-based playback, prefer the Watch endpoint above. ZokoAnime does not expose a verified search or episode-catalogue adapter here; obtain the anime/episode metadata from your metadata or episode source first.
 
 | Action | Endpoint |
 |---|---|

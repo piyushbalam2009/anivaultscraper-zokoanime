@@ -8,6 +8,7 @@ import { resolveEmbed } from './resolvers/megacloud';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getMegaPlayStream } from './scrapers/megaplay';
+import { getZokoAnimeStream } from './providers/zokoanime';
 import { getDesidubEpisodes, getDesidubServers, getDesidubStream } from './scrapers/desidub';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getAllEpisodes as getAllMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml, MalEpisode } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode, getAnimeImages as getAnilistAnimeImages } from './scrapers/anilist';
@@ -453,6 +454,84 @@ async function watchHandler(req: Request, res: Response) {
     return res.status(500).json({ error: 'Stream fetch failed', detail: String(e) });
   }
 }
+
+/**
+ * AniList-first ZokoAnime watch endpoint.
+ *
+ * GET /api/watch/zokoanime/:anilist_id/:episode/:type
+ * The client supplies only AniList ID, episode, and sub/dub. Resolve the
+ * AniList -> MAL mapping internally and preserve the existing HLS proxy.
+ */
+router.get('/watch/zokoanime/:anilist_id/:episode/:type', async (req: Request, res: Response) => {
+  const anilistId = Number(req.params.anilist_id);
+  const episode = Number(req.params.episode);
+  const type = req.params.type;
+
+  if (!Number.isSafeInteger(anilistId) || anilistId < 1) {
+    return res.status(400).json({ error: 'anilist_id must be a positive integer' });
+  }
+  if (!Number.isSafeInteger(episode) || episode < 1) {
+    return res.status(400).json({ error: 'episode must be a positive integer' });
+  }
+  if (type !== 'sub' && type !== 'dub') {
+    return res.status(400).json({ error: 'type must be sub or dub' });
+  }
+
+  try {
+    const ids = await getSiteIds(anilistId);
+    if (!ids?.malId) {
+      return res.status(404).json({
+        source: 'zokoanime',
+        anilistId,
+        error: 'Could not resolve AniList ID to a MAL ID',
+      });
+    }
+
+    // ZokoAnime's existing resolver expects MAL_ID::episode::type.
+    const sourceId = [String(ids.malId), String(episode), type].join('::');
+    const stream = await getZokoAnimeStream(sourceId);
+    if (!stream) {
+      return res.status(404).json({
+        source: 'zokoanime',
+        anilistId,
+        malId: ids.malId,
+        episode,
+        type,
+        error: 'No ZokoAnime stream found for this episode and audio type',
+      });
+    }
+
+    return res.json({
+      source: 'zokoanime',
+      anilistId,
+      malId: ids.malId,
+      title: ids.title,
+      episode,
+      type,
+      ...stream,
+      hlsProxyUrl: proxiedHlsUrl(req, stream.m3u8, stream.embedUrl),
+      qualities: stream.qualities.map(({ url, ...quality }) => ({
+        ...quality,
+        hlsProxyUrl: proxiedHlsUrl(req, url, stream.embedUrl),
+      })),
+      subtitles: stream.subtitles.map((track) => ({
+        ...track,
+        url: proxiedSubtitleUrl(req, track.src, stream.embedUrl),
+      })),
+      iframeOnly: false,
+    });
+  } catch (error) {
+    const detail = (error as any)?.message || String(error);
+    console.error('[watch/zokoanime]', error);
+    return res.status(502).json({
+      source: 'zokoanime',
+      anilistId,
+      episode,
+      type,
+      error: detail,
+    });
+  }
+});
 
 router.get('/watch/:source/:id/:ep/:type', watchHandler);
 

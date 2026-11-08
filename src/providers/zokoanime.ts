@@ -11,9 +11,18 @@ export interface ZokoAnimeSubtitle {
   default: boolean;
   src: string;
 }
+export interface ZokoAnimeQuality {
+  quality: string;
+  resolution: string | null;
+  width: number | null;
+  height: number | null;
+  bandwidth: number | null;
+  url: string;
+}
 export interface ZokoAnimeStream {
   embedUrl: string;
   m3u8: string;
+  qualities: ZokoAnimeQuality[];
   subtitles: ZokoAnimeSubtitle[];
   downloadUrl: string | null;
   videoId: number | null;
@@ -52,6 +61,47 @@ function safeHttpUrl(value: unknown): string | null {
   }
 }
 
+/** Parse the publicly advertised HLS master-playlist variants. */
+function parseHlsQualities(playlist: string, masterUrl: string): ZokoAnimeQuality[] {
+  const qualities: ZokoAnimeQuality[] = [];
+  let pendingAttributes: string | null = null;
+
+  for (const rawLine of playlist.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+      pendingAttributes = line.slice('#EXT-X-STREAM-INF:'.length);
+      continue;
+    }
+    if (!pendingAttributes || line.startsWith('#')) continue;
+
+    const resolutionMatch = pendingAttributes.match(/(?:^|,)RESOLUTION=(\d+)x(\d+)(?:,|$)/i);
+    const bandwidthMatch = pendingAttributes.match(/(?:^|,)BANDWIDTH=(\d+)(?:,|$)/i);
+    const nameMatch = pendingAttributes.match(/(?:^|,)NAME=(?:"([^"]+)"|([^,]+))/i);
+    const url = safeHttpUrl(new URL(line, masterUrl).toString());
+
+    if (url) {
+      const width = resolutionMatch ? Number(resolutionMatch[1]) : null;
+      const height = resolutionMatch ? Number(resolutionMatch[2]) : null;
+      const name = nameMatch ? (nameMatch[1] || nameMatch[2]).trim() : null;
+      qualities.push({
+        quality: height ? String(height) + 'p' : (name || 'Auto'),
+        resolution: width && height ? String(width) + 'x' + String(height) : null,
+        width,
+        height,
+        bandwidth: bandwidthMatch ? Number(bandwidthMatch[1]) : null,
+        url,
+      });
+    }
+    pendingAttributes = null;
+  }
+
+  return qualities.filter((item, index, all) =>
+    all.findIndex(candidate => candidate.url === item.url) === index
+  );
+}
+
 export async function getZokoAnimeStream(sourceId: string): Promise<ZokoAnimeStream | null> {
   const [malId, episodeText, type, ...extra] = sourceId.split('::');
   const episode = Number(episodeText);
@@ -72,6 +122,29 @@ export async function getZokoAnimeStream(sourceId: string): Promise<ZokoAnimeStr
   if (!m3u8 || !/\.m3u8(?:$|[?#])/i.test(new URL(m3u8).pathname + new URL(m3u8).search)) {
     throw new Error('ZokoAnime did not provide a valid HLS playlist');
   }
+
+  // Inspect ZokoAnime's HLS master playlist and enumerate its advertised
+  // quality variants. If this lookup fails, keep adaptive master playback.
+  let qualities: ZokoAnimeQuality[] = [];
+  try {
+    const master = await axios.get(m3u8, {
+      timeout: 15000,
+      responseType: 'text',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; AniVaultScraper/1.0)',
+        'Accept': '*/*',
+        Referer: embedUrl,
+        Origin: BASE_URL,
+      },
+    });
+    const playlist = String(master.data ?? '');
+    if (playlist.trim().startsWith('#EXTM3U')) {
+      qualities = parseHlsQualities(playlist, m3u8);
+    }
+  } catch (error) {
+    console.warn('[zokoanime] Could not inspect HLS master playlist:', (error as any)?.message || error);
+  }
+
   const subtitles: ZokoAnimeSubtitle[] = Array.isArray(config.subtitles)
     ? config.subtitles.flatMap((track: any) => {
         const src = safeHttpUrl(track?.src);
@@ -85,7 +158,7 @@ export async function getZokoAnimeStream(sourceId: string): Promise<ZokoAnimeStr
     : [];
 
   return {
-    embedUrl, m3u8, subtitles,
+    embedUrl, m3u8, qualities, subtitles,
     downloadUrl: safeHttpUrl(config.download_url),
     videoId: Number.isSafeInteger(config.video_id) ? config.video_id : null,
     skip: config.skip && typeof config.skip === 'object'
