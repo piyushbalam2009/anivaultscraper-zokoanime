@@ -253,7 +253,7 @@ GET /api/watch/zokoanime/21/1/sub
 GET /api/watch/zokoanime/21/1/dub
 ```
 
-The response includes the AniList ID, resolved MAL ID, episode and audio type, stream fields from the ZokoAnime resolver, a proxied HLS URL when available, and proxied subtitle URLs. Only `sub` and `dub` are accepted.
+The response includes the AniList ID, resolved MAL ID, episode and audio type, a top-level adaptive `hlsProxyUrl`, proxied subtitle URLs, and a `qualities` array discovered from the upstream HLS master playlist. Each quality entry includes the advertised resolution, dimensions, bandwidth, and its own `hlsProxyUrl`. Only variants listed by the upstream playlist are returned; if variant inspection fails, the adaptive master URL remains available and `qualities` is empty. Only `sub` and `dub` are accepted.
 
 ### ZokoAnime direct-ID provider
 
