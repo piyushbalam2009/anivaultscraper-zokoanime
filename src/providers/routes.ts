@@ -62,4 +62,60 @@ router.get('/zokoanime/watch', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * AniList-first watch route. Resolve AniList -> MAL through the existing
+ * mapper, then reuse the exact provider sourceId and stream resolver.
+ *
+ * GET /api/watch/zokoanime/:anilist_id/:episode/:type
+ */
+router.get('/zokoanime/:anilist_id/:episode/:type', async (req: Request, res: Response) => {
+  const anilistId = Number(req.params.anilist_id);
+  const episode = Number(req.params.episode);
+  const type = req.params.type;
+
+  if (!Number.isSafeInteger(anilistId) || anilistId < 1) {
+    return res.status(400).json({ error: 'anilist_id must be a positive integer' });
+  }
+  if (!Number.isSafeInteger(episode) || episode < 1) {
+    return res.status(400).json({ error: 'episode must be a positive integer' });
+  }
+  if (type !== 'sub' && type !== 'dub') {
+    return res.status(400).json({ error: 'type must be sub or dub' });
+  }
+
+  try {
+    const ids = await getSiteIds(anilistId);
+    if (!ids?.malId) {
+      return res.status(404).json({ source: 'zokoanime', anilistId, error: 'Could not resolve AniList ID to a MAL ID' });
+    }
+
+    const sourceId = [String(ids.malId), String(episode), type].join('::');
+    const stream = await getZokoAnimeStream(sourceId);
+    if (!stream) {
+      return res.status(404).json({
+        source: 'zokoanime', anilistId, malId: ids.malId, episode, type,
+        error: 'No ZokoAnime stream found for this episode and audio type',
+      });
+    }
+
+    return res.json({
+      source: 'zokoanime',
+      anilistId,
+      malId: ids.malId,
+      title: ids.title,
+      episode,
+      type,
+      ...stream,
+      hlsProxyUrl: proxiedHlsUrl(req, stream.m3u8, stream.embedUrl),
+      subtitles: stream.subtitles.map((track) => ({
+        ...track,
+        url: proxiedSubtitleUrl(req, track.src, stream.embedUrl),
+      })),
+      iframeOnly: false,
+    });
+  } catch (error) {
+    return res.status(502).json({ source: 'zokoanime', anilistId, episode, type, error: safeError(error) });
+  }
+});
+
 export default router;
