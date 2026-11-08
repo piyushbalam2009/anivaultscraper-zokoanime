@@ -86,8 +86,8 @@ function parseHlsQualities(playlist: string, masterUrl: string): ZokoAnimeQualit
       const height = resolutionMatch ? Number(resolutionMatch[2]) : null;
       const name = nameMatch ? (nameMatch[1] || nameMatch[2]).trim() : null;
       qualities.push({
-        quality: height ? \`\${height}p\` : (name || 'Auto'),
-        resolution: width && height ? \`\${width}x\${height}\` : null,
+        quality: height ? String(height) + 'p' : (name || 'Auto'),
+        resolution: width && height ? String(width) + 'x' + String(height) : null,
         width,
         height,
         bandwidth: bandwidthMatch ? Number(bandwidthMatch[1]) : null,
