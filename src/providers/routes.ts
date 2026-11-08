@@ -51,6 +51,10 @@ router.get('/zokoanime/watch', async (req: Request, res: Response) => {
       // The shared HLS proxy rewrites every nested playlist/segment URI and
       // forwards ZokoAnime's required Referer and Origin headers.
       hlsProxyUrl: proxiedHlsUrl(req, stream.m3u8, stream.embedUrl),
+      qualities: stream.qualities.map(({ url, ...quality }) => ({
+        ...quality,
+        hlsProxyUrl: proxiedHlsUrl(req, url, stream.embedUrl),
+      })),
       subtitles: stream.subtitles.map((track) => ({
         ...track,
         url: proxiedSubtitleUrl(req, track.src, stream.embedUrl),
