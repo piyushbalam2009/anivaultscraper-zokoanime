@@ -510,6 +510,10 @@ router.get('/watch/zokoanime/:anilist_id/:episode/:type', async (req: Request, r
       type,
       ...stream,
       hlsProxyUrl: proxiedHlsUrl(req, stream.m3u8, stream.embedUrl),
+      qualities: stream.qualities.map(({ url, ...quality }) => ({
+        ...quality,
+        hlsProxyUrl: proxiedHlsUrl(req, url, stream.embedUrl),
+      })),
       subtitles: stream.subtitles.map((track) => ({
         ...track,
         url: proxiedSubtitleUrl(req, track.src, stream.embedUrl),
